@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Photo Gallery</title>
+    <style>
+        .collection {
+            cursor: pointer;
+            margin-bottom: 10px;
+            font-size: 20px; 
+            text-align: center; 
+            font-weight: bold;
+        }
+
+        .photos {
+            display: none;
+            margin-bottom: 20px;
+        }
+
+        .photo {
+            width: 150px;
+            height: 100px;
+            object-fit: cover;
+            margin-right: 5px;
+        }
+
+        .photo.fullscreen {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: contain; /* Maintain aspect ratio */
+            background-color: black; /* Background color behind the image */
+            z-index: 9999; /* Ensure the image appears on top */
+        }
+    </style>
+</head>
+
+<body>
+    <p style="font-size: 30px;text-align:center; margin-bottom:30px">List of collections, click on a name to visualize photos inside.</p>
+    <script>
+
+        document.addEventListener("DOMContentLoaded", () => {
+            fetch('/get_collections_and_photos  ') 
+                .then(response => response.json())
+                .then(data => {
+                    console.log(data);
+                    data.forEach(collection => {
+                        const collectionElement = document.createElement('div');
+                        collectionElement.classList.add('collection');
+                        collectionElement.textContent = collection.name;
+                        collectionElement.addEventListener('click', () => {
+                            togglePhotos(collection.id);
+                        });
+
+                        const photosElement = document.createElement('div');
+                        photosElement.classList.add('photos');
+                        photosElement.id = collection.id;
+                        photosElement.style.display = 'none';
+
+                        collection.photos.forEach(photo => {
+                            const img = document.createElement('img');
+                            img.classList.add('photo');
+                            img.src = "media/" + photo;
+                            img.addEventListener('click', () => {
+                                openFullscreen(img);
+                            });
+                            photosElement.appendChild(img);
+                        });
+
+                        document.body.appendChild(collectionElement);
+                        document.body.appendChild(photosElement);
+                    });
+                })
+                .catch(error => console.error('Error:', error));
+
+            function togglePhotos(collectionId) {
+                const photos = document.getElementById(collectionId);
+                if (photos.style.display === "none") {
+                    photos.style.display = "block";
+                } else {
+                    photos.style.display = "none";
+                }
+            }
+            document.addEventListener('fullscreenchange', exitHandler);
+            document.addEventListener('webkitfullscreenchange', exitHandler);
+            document.addEventListener('mozfullscreenchange', exitHandler);
+            document.addEventListener('MSFullscreenChange', exitHandler);
+
+            function exitHandler() {
+                if (!document.fullscreenElement && !document.webkitFullscreenElement && !document.mozFullScreenElement && !document.msFullscreenElement) {
+                    const fullscreenImg = document.querySelector('.fullscreen');
+                    if (fullscreenImg) {
+                        fullscreenImg.classList.remove('fullscreen');
+                    }
+                }
+            }
+
+            function openFullscreen(img) {
+                img.classList.add('fullscreen')
+                if (img.requestFullscreen) {
+                    img.requestFullscreen();
+                } else if (img.mozRequestFullScreen) { /* Firefox */
+                    img.mozRequestFullScreen();
+                } else if (img.webkitRequestFullscreen) { /* Chrome, Safari and Opera */
+                    img.webkitRequestFullscreen();
+                } else if (img.msRequestFullscreen) { /* IE/Edge */
+                    img.msRequestFullscreen();
+                }
+            }
+        });
+    </script>
+</body>
+
+</html>

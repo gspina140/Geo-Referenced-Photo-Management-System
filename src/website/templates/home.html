@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Photos Map</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css"
+        integrity="sha512-xodZBNTC5n17Xt2atTPuE1HxjVMSvLVW9ocqUKLsCC5CXdbqCmblAshOMAS6/keqq/sMZMZ19scR4PsZChSR7A=="
+        crossorigin="" />
+    <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"
+        integrity="sha512-XQoYMqMTK8LvdxXYG3nZ448hOEQiglfqkJs1NOQV44cWnUrBc8PkAOcXy20w0vlaXaVUearIOBhiXZ5V3ynxwA=="
+        crossorigin=""></script>
+    <script src="https://cdn.jsdelivr.net/npm/leaflet.heat/dist/leaflet-heat.js"></script>
+    
+</head>
+
+<body>
+    <div id="map" style = "width: 100vw; height: 550px"></div>
+    <script>
+        var mapOptions = {
+            center: L.latLng(44.4937544, 11.3409058),
+            zoom: 6
+        }
+
+        var map = L.map('map', mapOptions);
+        
+        var baseLayer = new L.tileLayer('http://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png');
+        
+        map.addLayer(baseLayer);
+
+        var geojson_layer;
+        function sendPosition(){
+            map.on('click', function(e) {
+                var lat = e.latlng.lat;
+                var lng = e.latlng.lng;
+
+                fetch('/send_position', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ latitude: lat, longitude: lng })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    console.log('Position sent:', data);
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                });
+            });
+        }
+
+        function handleUpload() {
+            const fileInput = document.getElementById('geojsonFileInput');
+            const file = fileInput.files[0];
+
+            if (file) {
+                const reader = new FileReader();
+
+                reader.onload = function (event) {
+                    const geojson = JSON.parse(event.target.result);
+
+                    if (geojson && geojson.features) {
+                        geojson.features.forEach((feature, index) => {
+                            feature.id = index + 1;
+                        });
+                    }
+
+                    geojson_layer = L.geoJSON(geojson, {
+                        onEachFeature: function (feature, layer) {
+                            layer.on('click', function (e) {
+                                if(feature.geometry.type == 'Polygon'){
+                                    filterMarkers(feature.geometry.coordinates)
+                                }
+                            })
+                        }
+                    });
+
+                    map.addLayer(geojson_layer);
+                    map.fitBounds(geojson_layer.getBounds());
+                };
+
+                reader.readAsText(file);
+
+                const formData = new FormData();
+
+                formData.append('file', file);
+
+                fetch('/upload_geojson', {
+                    method: 'POST',
+                    body: formData
+                })
+                .then(response => response.json())
+                .then(data => {
+                    console.log(data); 
+                    alert(data.message);
+                })
+                .catch(error => console.error('Error:', error));
+            } else {
+                console.error('No file selected');
+            }
+        }
+
+        function addMarkers() {
+            fetch('/get_photo_data')  
+            .then(response => response.json())
+            .then(data => {
+                L.geoJSON(data, {
+                    pointToLayer: function (feature, latlng) {
+                        return L.marker(latlng).bindPopup("<img src='media/" +  feature.properties.name + "' />", {maxWidth:"auto"});
+                    }
+                }).addTo(map);
+            })
+            .catch(error => console.error('Error:', error));
+        }
+
+        function filterMarkers(zoneCoordinates){
+            map.eachLayer(function (layer) {
+                if (layer instanceof L.Marker) {
+                    map.removeLayer(layer);
+                }
+            });
+
+            fetch('/filter_markers', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({coordinates: zoneCoordinates})
+            })
+            .then(response => response.json())
+            .then(data => {
+                L.geoJSON(data,{
+                    pointToLayer: function (feature, latlng) {
+                        return L.marker(latlng).bindPopup("<img src='media/" +  feature.properties.name + "' />", {maxWidth:"auto"});
+                    }
+                }).addTo(map);
+            })
+            .catch(error => console.error('Error:', error));
+        }
+
+        function colorZones(){
+            fetch('/color_zones')
+            .then(response => response.json())
+            .then(data => {
+                map.eachLayer(layer => {
+                    if (layer instanceof L.Polygon) {
+                        map.removeLayer(layer);
+                    }
+                });
+
+                colored_zones = L.geoJSON(data, {
+                    style: function (feature) {
+                        return {
+                            fillColor: feature.properties.fill,
+                            fillOpacity: feature.properties['fill-opacity']
+                        };
+                    }
+                });
+                map.addLayer(colored_zones);
+                map.fitBounds(colored_zones.getBounds())
+            })
+            .catch(error => console.error('Error:', error))
+        }
+
+        function clusterMarkers(){
+            const kValue = document.getElementById('kInput').value || 0;
+            fetch('/cluster_markers', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({k: kValue})
+            })
+            .then(response=> response.json())
+            .then(data => {
+                map.eachLayer(function (layer) {
+                    if (layer instanceof L.Marker) {
+                        map.removeLayer(layer);
+                    }
+                });
+    
+                clusterColors = ['#ff0000','#ffff00','#33cc33','#00ccff','#3333ff','#cc33ff','#996633','#ff8000','#800000','#000000'];
+
+                L.geoJSON(data, {
+                    pointToLayer: function (feature, latlng) {
+                        return L.circleMarker(latlng, {color: clusterColors[feature.properties.cluster]}).bindPopup("<img src='media/" +  feature.properties.name + "' />", {maxWidth:"auto"});
+                    }
+                }).addTo(map);
+            })
+            .catch(error => console.error('Error:', error))
+        }
+
+        function visualizeHeatmap(){
+            fetch('/get_markers')  
+            .then(response => response.json())
+            .then(data => {
+                console.log(data);
+
+                map.eachLayer(function (layer) {
+                    if (layer !== baseLayer) {
+                        map.removeLayer(layer);
+                    }
+                });
+                
+                const heatmapData = [];
+
+                data.forEach(marker => {
+                    heatmapData.push([marker[0], marker[1], 1]); 
+                });
+
+                console.log(heatmapData);
+                const heat = L.heatLayer(heatmapData, { radius: 25 , maxZoom: 10, max: 0.5}).addTo(map);
+
+                console.log(heat);
+            })
+            .catch(error => console.error('Error:', error));
+        }
+
+        function visualizeGallery() {
+            fetch('/gallery') 
+                .then(response => response.text())
+                .then(data => {
+                    console.log(data);
+
+                    document.open();
+                    document.write(data);
+                    document.close();
+                })
+                .catch(error => console.error('Error:', error));
+        }        
+
+        function buildTrail(){
+            const collectionName = document.getElementById('collNameInput').value;
+
+            fetch('build_trail', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({collName: collectionName})
+            })
+            .then(response => response.json())
+            .then(data => {
+                map.eachLayer(function (layer) {
+                    if (layer !== baseLayer) {
+                        map.removeLayer(layer);
+                    }
+                });
+
+                var photoData = data;
+                photoData.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+                const latlong = [];
+                for (let i = 0; i < photoData.length - 1; i++) {
+                    latlong.push([photoData[i].lat, photoData[i].lng])
+                }
+                const polyline = L.polyline(latlong, {color:'red', weight:5}).addTo(map);
+                
+                polyline.bindPopup(`Start: ${photoData[0].timestamp}<br>End: ${photoData[photoData.length - 1].timestamp}`);
+            })
+            .catch(error => console.error('Error:', error));
+        }
+    </script>
+
+    <div class = "container" style = "display: flex;">
+        <div class = "column" style = "flex:1; margin:10px;">   
+            <div id="form"> </div>
+            <form id="uploadForm" action="/upload" method="post" enctype="multipart/form-data">
+                <div class = "container" style = "display: flex;">
+
+                <div class = "column" style = "flex:1; margin:10px;">   
+                    <p>Input image file</p>
+                    <input type="file" name="file" id="fileInput">
+                </div>
+                
+                <div class = "column" style = "flex:1; margin:10px;">   
+                    <p>Or input a folder of images</p>
+                    <input type="file" name="folder" id="folderInput" webkitdirectory mozdirectory msdirectory odirectory directory multiple>
+                </div>
+                </div>
+                <p>Input the name of the collection to add image(s)</p>
+                <input text="collection" name="collection" id="collectionInput">
+
+                <p>Click on the following button, then click on the map the position where photos were taken, or use your actual position by clicking directly 'Upload' </p>
+                <button type="button" onclick="sendPosition()">Select position on map</button>
+
+                <p>If your are uploading a folder the location of the photos can be perturbed to avoid to save all photos in the same position, insert the maximum distance in km from which save the photos (insert nothing to save all in the same position)</p>
+                <input text="distance" name="distance" id="distanceInput">
+
+                <p> </p>
+                <button type="submit">Upload</button>
+            </form>
+        </div>
+        <div class = "column" style = "flex:1; margin:10px;">   
+            <p>Visualize position of the photos on the map, click on a marker to see the photo</p>
+            <button onclick="addMarkers()">Add Markers</button>
+
+            <p>Upload goejson file containing zones</p>
+            <input type="file" id="geojsonFileInput" accept=".geojson">
+            <button onclick="handleUpload()">Upload GeoJSON</button>
+
+            <p>Now click on a zone to visualize only photost taken here</p>
+            <p>Or click the following button to color the zones on the base of the number of photos taken here</p>
+            <button onclick="colorZones()">Color Zones</button>
+        </div>
+        <div class = "column" style = "flex:1; margin:10px;">   
+            <p>Cluster the photos in groups, input number of gropus or let the system choose the better</p>
+            <input text="k" name="k" id="kInput">
+            <button onclick="clusterMarkers()">Cluster Photos</button>
+
+            <p>Visualize an heatmap of the photos</p>
+            <button onclick="visualizeHeatmap()">Visualize heatmap</button>
+
+            <p>Connect photos of a collection in cronological order, to visualize the path traversed while taking those picture</p>
+            <input text="collName" name="collName" id="collNameInput">
+            <button onclick="buildTrail()">Build Trail</button>
+
+            <p>Visualize photo gallery</p>
+            <button onclick="visualizeGallery()">Visualize Gallery</button>
+        </div>
+    </div>
+
+    <script>
+        document.getElementById('uploadForm').addEventListener('submit', function(event) {
+            event.preventDefault();
+            var formData = new FormData(this);
+
+            fetch('/upload', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                console.log(data); 
+                alert(data.message)
+            })
+            .catch(error => console.error('Error:', error));
+        });
+    </script>
+    
+</body>
+
+</html>
